@@ -5,6 +5,8 @@ import { Send, Play, X, Code, Loader2, Sparkles, RefreshCw, AlertCircle, CheckCi
 import { useStore, Message } from '@/store/useStore';
 import DiffViewModal from './DiffViewModal';
 
+import { getErrorMessage } from '@/utils/error';
+
 export default function AIChatPanel() {
   const { chatMessages, addChatMessage, clearChat, currentActiveFile, fileContents, setFileContent } = useStore();
   const [input, setInput] = useState('');
@@ -19,8 +21,8 @@ export default function AIChatPanel() {
   const checkAiHealth = async () => {
     setAiStatus({ state: 'checking', message: 'Checking AI connection...' });
     try {
-      const res = await fetch(`${getBackendUrl()}/api/ai/health`).catch(() => null);
-      if (!res || !res.ok) {
+      const res = await fetch(`${getBackendUrl()}/api/ai/health`);
+      if (!res.ok) {
         setAiStatus({ state: 'error', message: 'Backend unreachable.' });
         return;
       }
@@ -31,7 +33,7 @@ export default function AIChatPanel() {
         setAiStatus({ state: 'warning', message: data.message || data.error });
       }
     } catch (e) {
-      setAiStatus({ state: 'error', message: 'Failed to check AI health.' });
+      setAiStatus({ state: 'error', message: getErrorMessage(e) });
     }
   };
 
@@ -54,10 +56,14 @@ export default function AIChatPanel() {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text, projectContext })
       });
 
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || data?.details || data?.message || `Request failed: ${res.status}`);
+      }
+
       const data = await res.json();
-      if (!res.ok || !data.success) {
-        addChatMessage({ role: 'assistant', content: `❌ Error: ${data.error || 'Failed to get AI response'}\n\nDetails: ${data.details || ''}` });
-        return;
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to get AI response');
       }
 
       addChatMessage({ role: 'assistant', content: data.reply || 'Applied changes.' });
@@ -131,6 +137,12 @@ export default function AIChatPanel() {
           const termRes = await fetch(`${backendUrl}/api/terminal/run`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ command: cmd })
           });
+          
+          if (!termRes.ok) {
+            const td = await termRes.json().catch(() => null);
+            throw new Error(td?.error || td?.message || `Terminal run failed: ${termRes.status}`);
+          }
+
           const termData = await termRes.json();
           
           if (!termData.success) {
@@ -162,7 +174,7 @@ export default function AIChatPanel() {
          }
       }
     } catch (e: any) {
-      addChatMessage({ role: 'assistant', content: `❌ Failed to apply changes: ${e.message}` });
+      addChatMessage({ role: 'assistant', content: `❌ Failed to apply changes: ${getErrorMessage(e)}` });
     }
     setPendingChanges(null);
     setShowDiff(false);

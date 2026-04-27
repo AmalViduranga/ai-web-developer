@@ -8,6 +8,7 @@ import AIChatPanel from './AIChatPanel';
 import SettingsModal from './SettingsModal';
 import { io, Socket } from 'socket.io-client';
 import { useStore } from '@/store/useStore';
+import { getErrorMessage } from '@/utils/error';
 import { 
   Settings, Loader2, X, Code, Play, Square,
   TerminalSquare, FileCode2, Sparkles, AlertTriangle, Trash2, GitBranch, RefreshCw, PanelRightClose, PanelRightOpen,
@@ -81,29 +82,47 @@ export default function IDE() {
   }, [socket]);
 
   const safeFetch = async (url: string, options?: any) => {
-    if (!backendOnline) return { error: 'Backend offline' };
+    if (!backendOnline) throw new Error('Backend offline');
     try {
       const res = await fetch(url, options);
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || data?.message || `Request failed: ${res.status}`);
+      }
       return await res.json();
-    } catch (e) { return { error: 'Failed to fetch' }; }
+    } catch (e) {
+      throw new Error(getErrorMessage(e));
+    }
   };
 
   const updateFileList = async () => {
-    const data = await safeFetch(`${getApiBase()}/api/files/tree`);
-    if (data && !data.error && Array.isArray(data)) setFiles(data);
+    try {
+      const data = await safeFetch(`${getApiBase()}/api/files/tree`);
+      if (data && Array.isArray(data)) setFiles(data);
+    } catch (e) {
+      console.error('Failed to update file list:', getErrorMessage(e));
+    }
   };
 
   const updateGitStatus = async () => {
-    const data = await safeFetch(`${getApiBase()}/api/git/status`);
-    if (data && !data.error) setGitStatus(data);
+    try {
+      const data = await safeFetch(`${getApiBase()}/api/git/status`);
+      if (data) setGitStatus(data);
+    } catch (e) {
+      console.error('Failed to update git status:', getErrorMessage(e));
+    }
   };
 
   const handleSelectFile = async (path: string) => {
     if (!fileContents[path]) {
-      const data = await safeFetch(`${getApiBase()}/api/files/read`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path })
-      });
-      if (data && !data.error) setFileContent(path, data.content);
+      try {
+        const data = await safeFetch(`${getApiBase()}/api/files/read`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path })
+        });
+        if (data) setFileContent(path, data.content);
+      } catch (e) {
+        console.error('Failed to select file:', getErrorMessage(e));
+      }
     }
     openFile(path);
   };
@@ -111,9 +130,13 @@ export default function IDE() {
   const handleEditorChange = async (value: string | undefined) => {
     if (currentActiveFile && value !== undefined) {
       setFileContent(currentActiveFile, value);
-      await safeFetch(`${getApiBase()}/api/files/write`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: currentActiveFile, content: value })
-      });
+      try {
+        await safeFetch(`${getApiBase()}/api/files/write`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: currentActiveFile, content: value })
+        });
+      } catch (e) {
+        console.error('Failed to write file:', getErrorMessage(e));
+      }
     }
   };
 
