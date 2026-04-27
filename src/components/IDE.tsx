@@ -62,9 +62,23 @@ export default function IDE() {
 
   useEffect(() => {
     initBackend();
-    return () => { if (socket) socket.disconnect(); };
+    
+    const handleRunDev = (e: any) => {
+      const cmd = e.detail;
+      if (socket) {
+        setShowBottomPanel(true);
+        setActiveBottomPanel('terminal');
+        socket.emit('terminal:write', `\x03\r\n${cmd}\r\n`);
+      }
+    };
+    window.addEventListener('run-dev-server', handleRunDev);
+    
+    return () => { 
+      if (socket) socket.disconnect(); 
+      window.removeEventListener('run-dev-server', handleRunDev);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [socket]);
 
   const safeFetch = async (url: string, options?: any) => {
     if (!backendOnline) return { error: 'Backend offline' };

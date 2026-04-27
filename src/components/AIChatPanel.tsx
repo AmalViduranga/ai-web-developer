@@ -84,11 +84,14 @@ export default function AIChatPanel() {
     return arr;
   };
 
-  const applyChanges = async (filesToAccept: string[] = []) => {
+  const applyChanges = async (filesToAccept: string[] = [], retryCount = 0) => {
     if (!pendingChanges) return;
     const backendUrl = getBackendUrl();
     let appliedCount = 0;
     
+    setIsLoading(true);
+    addChatMessage({ role: 'assistant', content: `⚙️ Applying changes and installing dependencies...` });
+
     try {
       if (pendingChanges.files_created) {
         for (const f of pendingChanges.files_created) {
@@ -114,12 +117,56 @@ export default function AIChatPanel() {
         }
       }
       
-      addChatMessage({ role: 'assistant', content: `✅ Applied ${appliedCount} changes successfully.` });
+      let installFailed = false;
+      let errorLogs = '';
+
+      if (pendingChanges.commands && pendingChanges.commands.length > 0) {
+        for (const cmd of pendingChanges.commands) {
+          if (cmd.includes('npm run dev') || cmd.includes('next dev') || cmd.includes('vite')) {
+             // Let it run in the background terminal socket for UI visibility
+             continue; 
+          }
+          
+          addChatMessage({ role: 'assistant', content: `⏳ Running: ${cmd}...` });
+          const termRes = await fetch(`${backendUrl}/api/terminal/run`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ command: cmd })
+          });
+          const termData = await termRes.json();
+          
+          if (!termData.success) {
+            installFailed = true;
+            errorLogs = termData.output.substring(0, 1500); // Take last part of logs
+            break;
+          }
+        }
+      }
+
+      if (installFailed && retryCount < 3) {
+         addChatMessage({ role: 'assistant', content: `❌ Command failed. Auto-correcting (Attempt ${retryCount + 1}/3)...\n\nLogs:\n${errorLogs}` });
+         setPendingChanges(null);
+         setShowDiff(false);
+         // Auto-trigger AI to fix
+         sendMessage(`The previous command failed with this error:\n\n${errorLogs}\n\nPlease fix the files or package.json dependencies and provide the updated JSON block.`);
+         return;
+      } else if (installFailed) {
+         addChatMessage({ role: 'assistant', content: `❌ Command failed after 3 retries. Please check the terminal manually.\n\nLogs:\n${errorLogs}` });
+      } else {
+         addChatMessage({ role: 'assistant', content: `✅ Applied ${appliedCount} changes successfully and ran scripts.` });
+         
+         // Start dev server in the visible terminal panel if requested
+         const devCmd = pendingChanges.commands?.find((c: string) => c.includes('dev') || c.includes('start'));
+         if (devCmd) {
+            // Wait for socket to be available (assumes user will click run or we dispatch an event)
+            window.dispatchEvent(new CustomEvent('run-dev-server', { detail: devCmd }));
+            addChatMessage({ role: 'assistant', content: `🚀 Starting development server: ${devCmd}. Check the Terminal panel!` });
+         }
+      }
     } catch (e: any) {
       addChatMessage({ role: 'assistant', content: `❌ Failed to apply changes: ${e.message}` });
     }
     setPendingChanges(null);
     setShowDiff(false);
+    setIsLoading(false);
   };
 
   const handleAcceptAll = () => applyChanges();
@@ -127,12 +174,6 @@ export default function AIChatPanel() {
   
   const handleAcceptFile = (path: string) => {
     applyChanges([path]);
-    // Remove accepted from pending
-    const newPending = { ...pendingChanges };
-    if (newPending.files_created) newPending.files_created = newPending.files_created.filter((f:any) => f.path !== path);
-    if (newPending.files_modified) newPending.files_modified = newPending.files_modified.filter((f:any) => f.path !== path);
-    if (newPending.files_deleted) newPending.files_deleted = newPending.files_deleted.filter((p:string) => p !== path);
-    setPendingChanges(newPending);
   };
 
   const handleRejectFile = (path: string) => {

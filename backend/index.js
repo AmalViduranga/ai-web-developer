@@ -232,19 +232,28 @@ app.post('/api/ai/chat', async (req, res) => {
     let baseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
     let modelName = process.env.OLLAMA_MODEL || 'llama3.1';
     
-    let prompt = `You are an AI Developer IDE assistant. You can write code, fix bugs, and scaffold projects.
-Respond with a helpful explanation first, and then AT THE END, provide a JSON block containing your proposed actions. Wrap the JSON exactly in \`\`\`json ... \`\`\` markers.
+    let prompt = `You are a senior full-stack developer AI assistant. Your goal is to ALWAYS generate COMPLETE, RUNNABLE, and PRODUCTION-READY projects.
+Never generate partial code. Never skip essential configuration files.
+
+When generating a project from scratch, YOU MUST ALWAYS include the essential boilerplate files.
+For Next.js: include package.json, next.config.mjs, tsconfig.json, tailwind.config.ts, src/app/layout.tsx, src/app/page.tsx, and globals.css.
+For React/Vite: include package.json, vite.config.ts, index.html, src/main.tsx, src/App.tsx.
+For Express: include package.json, server.js.
+
+Respond with a brief explanation first, and then AT THE END, provide a STRICT JSON block containing your proposed actions.
+Wrap the JSON exactly in \`\`\`json ... \`\`\` markers.
 
 REQUIRED JSON FORMAT:
 \`\`\`json
 {
-  "summary": "What you did",
-  "files_created": [{ "path": "src/newfile.ts", "content": "..." }],
+  "summary": "What you built",
+  "projectName": "project-name",
+  "framework": "nextjs | react | express",
+  "files_created": [{ "path": "package.json", "content": "..." }, { "path": "src/app/page.tsx", "content": "..." }],
   "files_modified": [{ "path": "src/existing.ts", "content": "..." }],
   "files_deleted": ["src/oldfile.ts"],
-  "commands": ["npm install some-package"],
-  "dependencies": ["some-package"],
-  "notes": ["Run npm install to add packages"]
+  "commands": ["npm install", "npm run dev"],
+  "dependencies": ["lucide-react", "tailwindcss"]
 }
 \`\`\`
 If you don't need to perform any file actions, you can omit the JSON block entirely.
@@ -314,6 +323,29 @@ io.on('connection', (socket) => {
     } catch (e) { socket.emit('terminal:data', `Error: ${e.message}\r\n`); }
   });
   socket.on('disconnect', () => { if (ptyProcesses[socket.id]) { ptyProcesses[socket.id].kill(); delete ptyProcesses[socket.id]; } });
+});
+
+app.post('/api/terminal/run', async (req, res) => {
+  const { command } = req.body;
+  try {
+    const process = spawn(command, { cwd: WORKSPACE_DIR, shell: true, env: process.env });
+    let output = '';
+    
+    process.stdout.on('data', (data) => { output += data.toString(); });
+    process.stderr.on('data', (data) => { output += data.toString(); });
+    
+    process.on('close', (code) => {
+      res.json({ success: code === 0, output, code });
+    });
+    
+    // Auto-timeout after 3 minutes
+    setTimeout(() => {
+      process.kill();
+      res.json({ success: false, output: output + '\n[TIMEOUT]', code: -1 });
+    }, 180000);
+  } catch (err) {
+    res.status(500).json({ success: false, output: err.message, code: -1 });
+  }
 });
 
 if (fsSync.existsSync(WORKSPACE_DIR)) {
